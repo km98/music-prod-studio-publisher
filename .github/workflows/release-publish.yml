@@ -195,7 +195,7 @@ jobs:
           echo "request validated for $VERSION build $BUILD_NUMBER (previous $PREVIOUS_VERSION, candidate from $CANDIDATE_SOURCE)"
 
       - name: Check out the publisher tooling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
           fetch-depth: 1
           # Nothing here writes to the repository, so the token is not left

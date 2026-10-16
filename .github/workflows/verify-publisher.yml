@@ -76,7 +76,7 @@ jobs:
           fi
 
       - name: Check out the publisher tooling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
           # This workflow never writes to the repository, so the token does not
           # need to be left behind in the checkout's git config.
