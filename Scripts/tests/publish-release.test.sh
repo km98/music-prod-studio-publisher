@@ -540,9 +540,9 @@ echo ""
 echo "  --- the deployed lifecycle (publisher credential) ---"
 
 if [ "$HAVE_CANDIDATE" != "1" ]; then
-    skip "B1–B23 no notarized candidate available (set MPS_TEST_CANDIDATE, or fetch one into candidate/)"
+    skip "B1–B24 no notarized candidate available (set MPS_TEST_CANDIDATE, or fetch one into candidate/)"
     echo "      the publication guards are only meaningful against the artifact they would publish."
-    skipped=$((skipped + 23))
+    skipped=$((skipped + 24))
 else
     # B1: the happy path, authenticated by the MACHINE credential.
     run "" publisher "${IDENTITY[@]}" --sha256 "$FAKE_SHA" --size "$FAKE_SIZE"
@@ -625,6 +625,19 @@ else
         pass "B15 an already published release is verified without repeating a transition"
     else
         fail "B15 already-published verification (exit $RUN_STATUS)"
+    fi
+
+    # B24: a version the catalog ALREADY serves is still inspectable. The
+    # catalog's releaseNotes then describe THIS version, not the previous one, so
+    # comparing them with the previous version's row (which never carried them)
+    # made every re-inspection of a published release impossible — the state a
+    # release run leaves behind and the one an operator re-checks.
+    run "alreadypublished" publisher "${IDENTITY[@]}" --sha256 "$FAKE_SHA" --size "$FAKE_SIZE" --inspect
+    if [ "$RUN_STATUS" -eq 0 ] && grep -q "ALREADY serves $FAKE_VERSION" "$TMP/out" \
+        && grep -q "INSPECTION ONLY" "$TMP/out" && ! grep -q "^POST " "$TMP/log"; then
+        pass "B24 a version the catalog already serves is inspected end to end (nothing modified)"
+    else
+        fail "B24 verification-pass inspection (exit $RUN_STATUS): $(tail -2 "$TMP/out" | tr '\n' ' ')"
     fi
 
     echo ""

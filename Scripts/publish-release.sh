@@ -495,8 +495,11 @@ case "$BASELINE_LATEST" in
     "$VERSION") echo "    OK — catalog ALREADY serves $VERSION: this run is a verification pass" ;;
     *) stop "the public catalog serves an unexpected latest version: '$BASELINE_LATEST' (expected $PREVIOUS_VERSION or $VERSION)" ;;
 esac
-# Metadata of the product's published release, used below to prove the
-# admin-side $PREVIOUS_VERSION row belongs to Music-Prod Studio.
+# Metadata of the release the catalog is SERVING, used below to prove the admin
+# row for that release belongs to Music-Prod Studio. The served release is
+# $PREVIOUS_VERSION on a first publication and $VERSION on a verification pass,
+# so the notes are judged against $BASELINE_LATEST's row, never against a row
+# that never carried them.
 STUDIO_NOTES="$(echo "$BASELINE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"].get("releaseNotes") or "")')"
 
 # --------------------------------------------------------------- 1. identity
@@ -516,7 +519,7 @@ echo "    OK — the credential is authorized ($AUTH_MODE)"
 # traceback), so a STOP names the guard that fired.
 DISCOVERY="$(echo "$ADMIN_BODY" | python3 -c '
 import json, sys, re
-version, previous, expected_product, notes, notes_text, minimum = sys.argv[1:7]
+version, previous, expected_product, notes, notes_text, minimum, baseline_latest = sys.argv[1:8]
 
 def fail(msg):
     print("error\t%s" % msg.replace("\t", " "))
@@ -535,8 +538,23 @@ if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
     fail("the published %s row carries no usable product UUID: %r" % (previous, pid))
 if expected_product and pid != expected_product:
     fail("product UUID mismatch: got %s, expected %s" % (pid, expected_product))
-if notes == "" or (row.get("releaseNotes") or "") != notes:
-    fail("the admin %s row does not match the public music-prod-studio catalog (releaseNotes mismatch) — refusing to guess the product" % previous)
+# The catalog reports the notes of the release it is SERVING — its own
+# latestVersion — which is $PREVIOUS_VERSION only while that version is the newest
+# one published. A run whose version the catalog ALREADY serves is a verification
+# pass, and its notes then belong to $VERSION. They are therefore compared with
+# the row the catalog is actually describing: reading them against the
+# $PREVIOUS_VERSION row made a re-inspection of a published release impossible,
+# and proved nothing even when it passed, because a row that never carried those
+# notes is not evidence about the release the catalog serves.
+notes_version = baseline_latest or previous
+served = [r for r in rows if r.get("version") == notes_version and r.get("status") == "published"]
+if len(served) != 1:
+    fail("the public catalog serves %s but the admin list has no single published %s release (found %d) — the release record and the catalog disagree — refusing to guess the product" % (notes_version, notes_version, len(served)))
+served_row = served[0]
+if (served_row.get("productId") or "") != pid:
+    fail("the %s release the catalog serves belongs to product %s, not to product %s of the published %s release — refusing to guess the product" % (notes_version, served_row.get("productId"), pid, previous))
+if notes == "" or (served_row.get("releaseNotes") or "") != notes:
+    fail("the admin %s row does not match the public music-prod-studio catalog (releaseNotes mismatch) — refusing to guess the product" % notes_version)
 mine = [r for r in rows if r.get("version") == version]
 if len(mine) > 1:
     fail("found %d %s rows; versions are unique per product, so this is stale state" % (len(mine), version))
@@ -556,7 +574,7 @@ else:
     if r.get("minimumSupportedVersion") is not None and (r.get("minimumSupportedVersion") or "") != minimum:
         fail("the existing %s row records minimumSupportedVersion %r, not %r" % (version, r.get("minimumSupportedVersion"), minimum))
     print("ok\t%s\t%s\t%s" % (pid, r.get("id"), r.get("status") or ""))
-' "$VERSION" "$PREVIOUS_VERSION" "$EXPECTED_PRODUCT_ID" "$STUDIO_NOTES" "$NOTES_TEXT" "$MIN_SUPPORTED")" || DISCOVERY=""
+' "$VERSION" "$PREVIOUS_VERSION" "$EXPECTED_PRODUCT_ID" "$STUDIO_NOTES" "$NOTES_TEXT" "$MIN_SUPPORTED" "$BASELINE_LATEST")" || DISCOVERY=""
 IFS=$'\t' read -r DISCOVERY_KIND PRODUCT_ID EXISTING_RELEASE_ID EXISTING_STATUS <<< "$DISCOVERY"
 case "$DISCOVERY_KIND" in
     ok) EXISTING_RELEASE_ID="${EXISTING_RELEASE_ID:-}"; EXISTING_STATUS="${EXISTING_STATUS:-}" ;;

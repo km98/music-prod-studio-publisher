@@ -40,7 +40,13 @@ Environment:
   FAKECURL_LOG      optional file: one "METHOD url auth=… argv_has_credential=…" line per call
   FAKECURL_ARTIFACT path to the real local ZIP, copied for the download
   FAKE_VERSION / FAKE_PREVIOUS / FAKE_SHA / FAKE_SIZE / FAKE_NAME / FAKE_PRODUCT_ID /
-  FAKE_PREV_RELEASE_ID / FAKE_RELEASE_ID / FAKE_ARTIFACT_ID / FAKE_RELEASE_NOTES
+  FAKE_PREV_RELEASE_ID / FAKE_RELEASE_ID / FAKE_ARTIFACT_ID
+
+  FAKE_RELEASE_NOTES  the PREVIOUS release's own notes: what the admin row for
+                      FAKE_PREVIOUS carries and what the catalog reports while it
+                      still serves that version.
+  FAKE_CURRENT_NOTES  this run's notes / the current version's row: what the
+                      catalog reports once it serves FAKE_VERSION.
 """
 import os
 import re
@@ -143,11 +149,17 @@ PREVIOUS_ARTIFACT = {"id": PREV_RELEASE_ID, "format": "app-bundle", "platform": 
 
 
 def updates(latest, artifacts):
+    # The catalog reports the notes of the release it is SERVING: the previous
+    # release while this is a first publication, and THIS version once the
+    # catalog already serves it (a verification pass). Serving the previous
+    # release's notes in that second case would hide the whole class of
+    # mismatches the script's [1/8] check exists to catch.
+    served_notes = CURRENT_NOTES if latest == VERSION else NOTES
     return {"success": True, "data": {
         "product": "music-prod-studio", "currentVersion": "", "latestVersion": latest,
         "latestReleaseId": PREV_RELEASE_ID, "updateAvailable": True, "decision": "optionalUpdate",
         "mustUpdate": False, "mandatory": False, "minimumSupportedVersion": "2.0.0",
-        "releaseNotes": NOTES, "artifacts": artifacts}}
+        "releaseNotes": served_notes, "artifacts": artifacts}}
 
 
 # --- the download (signed URL on the config stream, bytes written by -o) -----
