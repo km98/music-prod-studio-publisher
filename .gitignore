@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Local scratch: a candidate fetched by hand, log files, extracted bundles.
+# Nothing here is ever an input to a published run — the workflows fetch their
+# own candidate and verify it by digest.
+candidate/
+*.log
+*.zip
+!assets/*.zip
+
+# A credential must never live in the repository. Scripts/release-publisher-credential.sh
+# refuses to write one inside the tree; this is the second line of defence.
+*.token
+publisher-credential-*

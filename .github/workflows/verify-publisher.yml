@@ -1,0 +1,137 @@
+# Verify publisher credential — read-only.
+#
+# WHAT THIS DOES
+#   One request: `GET /admin/releases` with the release publisher credential in
+#   its own header. It creates, approves, publishes, promotes and modifies
+#   NOTHING. Run this before a publication run to prove the deployment still
+#   accepts the credential the publication run will use.
+#
+# WHY IT IS A SEPARATE WORKFLOW
+#   It answers a different question from "publish a release", and it must be
+#   runnable without any version, digest or confirmation input — and without the
+#   possibility of a mistyped input turning into a mutation.
+#
+# THE HUMAN GATE
+#   `workflow_dispatch` only: nothing runs on a push or a pull request. The job
+#   runs in the `production` ENVIRONMENT, which must be configured with required
+#   reviewers — GitHub holds the job, and withholds MPS_PUBLISHER_TOKEN, until a
+#   reviewer approves it.
+#
+#   `MPS_PUBLISH_AUTOMATION_READY` must be `true` (a repository variable): the
+#   operator's own statement that the environment's protection and secret are
+#   configured. Without it the job refuses rather than testing under an
+#   unverified configuration.
+#
+# A 401 IS THE SIGNAL, NOT A DETAIL
+#   The published credential is checked by the function's admin seam before the
+#   router runs, and that seam answers a refused credential with the SAME
+#   envelope the human admin path uses. So a 401 means "not accepted" and cannot
+#   say which side is missing — see README.md ("When it stops").
+
+name: Verify publisher credential
+
+on:
+  workflow_dispatch:
+
+# Least privilege: this workflow reads this repository's files and nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-publisher-credential
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: GET /admin/releases with the publisher credential
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The approval gate. Configure required reviewers on this environment; the
+    # job (and therefore MPS_PUBLISHER_TOKEN) is withheld until they approve.
+    environment:
+      name: production
+      url: https://music-prod.com
+    env:
+      # The credential arrives only through the environment and leaves through a
+      # `curl -K -` stdin config. It is never an argument, never echoed, never
+      # printed — by this workflow or by the script it runs.
+      MPS_PUBLISHER_TOKEN: ${{ secrets.MPS_PUBLISHER_TOKEN }}
+
+    steps:
+      - name: Refuse to run unless the release environment is declared ready
+        env:
+          READY: ${{ vars.MPS_PUBLISH_AUTOMATION_READY }}
+        run: |
+          set -euo pipefail
+          if [ "${READY:-}" != "true" ]; then
+            echo "REFUSED: the repository variable MPS_PUBLISH_AUTOMATION_READY is not 'true'." >&2
+            echo "" >&2
+            echo "Set it only after the 'production' environment has:" >&2
+            echo "  * required reviewers (the manual approval gate)," >&2
+            echo "  * the secret MPS_PUBLISHER_TOKEN (a publisher credential token)," >&2
+            echo "and after the backend release-publisher credential is deployed and" >&2
+            echo "RELEASE_PUBLISHER_ACTOR_ID is set." >&2
+            echo "See README.md." >&2
+            exit 1
+          fi
+
+      - name: Check out the publisher tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        with:
+          # This workflow never writes to the repository, so the token does not
+          # need to be left behind in the checkout's git config.
+          persist-credentials: false
+
+      - name: Read-only credential check
+        run: |
+          set -o pipefail
+          Scripts/verify-publisher-credential.sh 2>&1 | tee "$RUNNER_TEMP/verify.log"
+          status=${PIPESTATUS[0]}
+          echo "verify-publisher-credential.sh exited $status"
+          exit "$status"
+
+      - name: Assert the credential never appeared in the output
+        if: always()
+        env:
+          VERIFY_LOG: ${{ runner.temp }}/verify.log
+        run: |
+          set -euo pipefail
+          # One line, and the credential is read from the environment: it must
+          # never be an argument, not even to this check.
+          python3 -c 'import os,sys; t=os.environ.get("MPS_PUBLISHER_TOKEN",""); d=open(sys.argv[1],encoding="utf-8",errors="replace").read(); sys.exit(1 if (t and t in d) else 0)' "$VERIFY_LOG" \
+            || { echo "REFUSED: the publisher credential appeared in the output" >&2; exit 1; }
+          echo "the publisher credential does not appear in the output"
+
+      - name: Report the outcome
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/verify.log"
+          {
+            echo "## Publisher credential check"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| result | $JOB_STATUS |"
+            echo "| request | GET /admin/releases (read-only) |"
+            echo "| effect | none — no release was created, approved, published or modified |"
+            echo ""
+            if [ -f "$log" ]; then
+              echo '```'
+              # The credential is never in the log (asserted above), so this tail
+              # is safe to publish as evidence.
+              tail -25 "$log"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the check log as evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verify-publisher-credential-${{ github.run_id }}
+          path: ${{ runner.temp }}/verify.log
+          if-no-files-found: warn
+          retention-days: 90
